@@ -3,6 +3,16 @@ import os
 import numpy as np
 import re
 import warnings
+
+# If torch is installed, it must be loaded BEFORE paddle: paddle bundles an
+# older libiomp5md.dll, and torch's shm.dll fails (WinError 127) when that
+# copy is already in the process. paddleocr imports torch indirectly via
+# paddlex -> modelscope, so preload it here while the process is still clean.
+try:
+    import torch  # noqa: F401
+except Exception:
+    pass
+
 import paddle
 import paddle.device
 from PIL import Image, ImageDraw
