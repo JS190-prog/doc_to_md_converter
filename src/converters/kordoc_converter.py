@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from urllib.parse import quote
 
 _kordoc_cmd = None
 
@@ -62,6 +63,37 @@ def convert_with_kordoc(file_path):
         with open(out_path, encoding="utf-8") as f:
             md = f.read()
 
+        md = _preserve_extracted_assets(md, tmpdir, out_path, file_path)
+
     if not md.strip():
         raise RuntimeError("kordoc produced empty output (image-based document?)")
+    return md
+
+
+def _preserve_extracted_assets(md, tmpdir, out_path, file_path):
+    """Copy images kordoc extracted into the temp dir next to the source
+    document (as <stem>_images/) and rewrite markdown links accordingly.
+    kordoc emits bare `image_NNN.jpg` refs while writing the files into an
+    `images/` subfolder, so both ref forms are rewritten."""
+    assets = []
+    for root, _dirs, files in os.walk(tmpdir):
+        for name in files:
+            full = os.path.join(root, name)
+            if os.path.abspath(full) != os.path.abspath(out_path):
+                assets.append(full)
+    if not assets:
+        return md
+
+    src_path = os.path.abspath(file_path)
+    stem = os.path.splitext(os.path.basename(src_path))[0]
+    assets_dirname = f"{stem}_images"
+    assets_dir = os.path.join(os.path.dirname(src_path), assets_dirname)
+    os.makedirs(assets_dir, exist_ok=True)
+    ref_dir = quote(assets_dirname)
+
+    for full in assets:
+        name = os.path.basename(full)
+        shutil.copy2(full, os.path.join(assets_dir, name))
+        md = md.replace(f"](images/{name})", f"]({ref_dir}/{name})")
+        md = md.replace(f"]({name})", f"]({ref_dir}/{name})")
     return md
