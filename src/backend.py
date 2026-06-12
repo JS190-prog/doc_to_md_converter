@@ -4,6 +4,7 @@ import sys
 from src.converters.docx_converter import convert_docx_to_md
 from src.converters.hwp_converter import convert_hwp_to_md
 from src.converters.hwpx_converter import convert_hwpx_to_md
+from src.converters.kordoc_converter import convert_with_kordoc
 from src.converters.markitdown_converter import convert_with_markitdown
 from src.converters.pdf_converter import convert_pdf_to_md
 from src.converters.xls_converter import convert_xls_to_md
@@ -125,6 +126,15 @@ def _convert_docx_with_router(file_path):
         errors.append(f"markitdown: {exc}")
 
     try:
+        markdown = convert_with_kordoc(file_path)
+        if _is_usable_markdown(markdown, ".docx"):
+            print("[engine] docx -> kordoc fallback")
+            return markdown
+        errors.append("kordoc produced low-quality output")
+    except Exception as exc:
+        errors.append(f"kordoc: {exc}")
+
+    try:
         markdown = convert_docx_to_md(file_path)
         if _is_usable_markdown(markdown, ".docx"):
             print("[engine] docx -> python-docx fallback")
@@ -136,13 +146,51 @@ def _convert_docx_with_router(file_path):
     raise RuntimeError("DOCX conversion failed. " + " | ".join(errors))
 
 
+def _pdf_digital_page_ratio(file_path):
+    """Fraction of pages that carry a real text layer (0.0 ~ 1.0)."""
+    import fitz
+
+    doc = fitz.open(file_path)
+    try:
+        total = len(doc)
+        if total == 0:
+            return 0.0
+        digital = 0
+        for page in doc:
+            compact = "".join(page.get_text("text").split())
+            if len(compact) >= 50:
+                digital += 1
+        return digital / total
+    finally:
+        doc.close()
+
+
 def _convert_pdf_with_router(file_path):
     errors = []
+
+    # kordoc reconstructs table structure from digital PDFs, but converts
+    # the whole file at once — only trust it when (almost) every page has
+    # a text layer, so scanned pages are never silently dropped.
+    try:
+        digital_ratio = _pdf_digital_page_ratio(file_path)
+    except Exception as exc:
+        digital_ratio = 0.0
+        errors.append(f"text-layer probe: {exc}")
+
+    if digital_ratio >= 0.9:
+        try:
+            markdown = convert_with_kordoc(file_path)
+            if _is_usable_markdown(markdown, ".pdf"):
+                print("[engine] pdf -> kordoc (digital)")
+                return markdown
+            errors.append("kordoc produced low-quality output")
+        except Exception as exc:
+            errors.append(f"kordoc: {exc}")
 
     try:
         markdown = convert_pdf_to_md(file_path)
         if _is_usable_markdown(markdown, ".pdf"):
-            print("[engine] pdf -> ocr primary")
+            print("[engine] pdf -> text-layer/ocr")
             return markdown
         errors.append("ocr converter produced low-quality output")
     except Exception as exc:
@@ -188,21 +236,36 @@ def process_file(file_path):
             markdown_content = _convert_pdf_with_router(file_path)
 
         elif file_ext == '.xlsx':
-            markdown_content = convert_xlsx_to_md(file_path)
+            try:
+                markdown_content = convert_xlsx_to_md(file_path)
+            except Exception as xlsx_err:
+                print(f"[kordoc fallback] xlsx: {xlsx_err}")
+                markdown_content = convert_with_kordoc(file_path)
 
         elif file_ext == '.xls':
-            markdown_content = convert_xls_to_md(file_path)
+            try:
+                markdown_content = convert_xls_to_md(file_path)
+            except Exception as xls_err:
+                print(f"[kordoc fallback] xls: {xls_err}")
+                markdown_content = convert_with_kordoc(file_path)
 
         elif file_ext in ('.hwp', '.hwpx'):
+            # kordoc first: best table fidelity (merged cells, nested
+            # tables) and widest HWP coverage (3.x, distribution HWP).
             try:
-                markdown_content = convert_hwp_with_hwp2md(file_path)
-            except Exception as hwp2md_err:
-                # Fallback to built-in converter
-                print(f"[hwp2md fallback] {hwp2md_err}")
-                if file_ext == '.hwp':
-                    markdown_content = convert_hwp_to_md(file_path)
-                else:
-                    markdown_content = convert_hwpx_to_md(file_path)
+                markdown_content = convert_with_kordoc(file_path)
+                print("[engine] hwp -> kordoc")
+            except Exception as kordoc_err:
+                print(f"[kordoc -> hwp2md fallback] {kordoc_err}")
+                try:
+                    markdown_content = convert_hwp_with_hwp2md(file_path)
+                except Exception as hwp2md_err:
+                    # Fallback to built-in converter
+                    print(f"[hwp2md fallback] {hwp2md_err}")
+                    if file_ext == '.hwp':
+                        markdown_content = convert_hwp_to_md(file_path)
+                    else:
+                        markdown_content = convert_hwpx_to_md(file_path)
         
         else:
             return False, "Unsupported file format"
