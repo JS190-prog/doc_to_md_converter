@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Build output (PyInstaller)
+build/
+dist/
+
+# One-off / scratch files
+tmp/
+*.log
+
+# Local agent state
+memory/
+.claude/settings.local.json
+
+# Redundant archive (exe is committed)
+tools/hwp2md.zip
+
+# Conversion outputs next to source documents
+*_converted.md
+!sample/*_converted.md

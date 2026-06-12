@@ -1,0 +1,69 @@
+{
+  "default_profile": "book",
+  "rules": [],
+  "profiles": {
+    "default": {
+      "rules": [
+        {
+          "pattern": "유\\s+튜브",
+          "replacement": "유튜브",
+          "enabled": true
+        },
+        {
+          "pattern": "도\\s+서",
+          "replacement": "도서",
+          "enabled": true
+        },
+        {
+          "pattern": "김난도GPT",
+          "replacement": "김난도 GPT",
+          "enabled": true
+        },
+        {
+          "pattern": "인스타그램\\s*계정\\s*:\\s*",
+          "replacement": "인스타그램 계정: ",
+          "enabled": true
+        },
+        {
+          "pattern": "유튜브채널\\s*:\\s*",
+          "replacement": "유튜브채널: ",
+          "enabled": true
+        }
+      ]
+    },
+    "book": {
+      "rules": [
+        {
+          "pattern": "전미영최지혜",
+          "replacement": "전미영 최지혜",
+          "enabled": true
+        },
+        {
+          "pattern": "트렌드코리아TV에참여하고",
+          "replacement": "트렌드코리아TV에 참여하고",
+          "enabled": true
+        },
+        {
+          "pattern": "Consu-\\s*mer",
+          "replacement": "Consumer",
+          "enabled": true
+        }
+      ]
+    },
+    "invoice": {
+      "rules": [
+        {
+          "pattern": "공급\\s*가액",
+          "replacement": "공급가액",
+          "enabled": true
+        },
+        {
+          "pattern": "부가\\s*세",
+          "replacement": "부가세",
+          "enabled": true
+        }
+      ]
+    }
+  }
+}
+
