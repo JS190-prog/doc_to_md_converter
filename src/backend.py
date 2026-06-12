@@ -52,26 +52,33 @@ def convert_doc_using_word(file_path):
     """
     Converts .doc to .docx using Word Interop, then reads .docx.
     """
+    word = None
     try:
         import win32com.client as win32
-        word = win32.Dispatch("Word.Application")
+        # DispatchEx starts a dedicated Word instance, so Quit() below can
+        # never close a Word window the user has open.
+        word = win32.DispatchEx("Word.Application")
         word.Visible = False
-        
+
         # WE NEED ABSOLUTE PATH (Normalizes forward slashes to backslashes)
         abs_path = os.path.abspath(file_path)
         doc = word.Documents.Open(abs_path)
-        
+
         new_path = abs_path + "x" # .doc -> .docx
         doc.SaveAs2(new_path, FileFormat=16) # 16 = wdFormatXMLDocument
         doc.Close()
-        # word.Quit() # Don't quit if user has Word open elsewhere? Best to leave it or handle carefully.
-        # Actually safer to convert and then close validly.
-        
+
         return new_path
     except Exception as e:
         import traceback
         traceback.print_exc()
         return None
+    finally:
+        if word is not None:
+            try:
+                word.Quit()
+            except Exception:
+                pass
 
 
 def _normalize_markdown(markdown_content):

@@ -125,17 +125,21 @@ class App(TkinterDnD.Tk):
         threading.Thread(target=self.process_files_thread, args=(files,), daemon=True).start()
 
     def process_files_thread(self, files):
+        # Tkinter is not thread-safe: all widget access from this worker
+        # thread must be marshalled to the main loop via self.after().
         for file in files:
             if not os.path.isfile(file):
                 continue
-                
-            self.log(f"Processing: {os.path.basename(file)}...")
+
+            self.after(0, self.log, f"Processing: {os.path.basename(file)}...")
             success, msg = process_file(file)
             status = "SUCCESS" if success else "FAILED"
-            self.log(f"[{status}] {msg}")
-        
-        self.status_var.set("Finished.")
-        messagebox.showinfo("Done", "All files processed!")
+            self.after(0, self.log, f"[{status}] {msg}")
+
+        def finish():
+            self.status_var.set("Finished.")
+            messagebox.showinfo("Done", "All files processed!")
+        self.after(0, finish)
 
 if __name__ == "__main__":
     app = App()

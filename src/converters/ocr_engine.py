@@ -51,9 +51,14 @@ class OCREngine:
 
         try:
             from paddleocr import PaddleOCR
-        except ImportError:
-            print("PaddleOCR not found. Please install requirements.")
-            return
+        except Exception as exc:
+            # Raise instead of leaving _reader=None: a silently cached broken
+            # singleton would make every OCR call return empty text with no
+            # error. get_instance() leaves _instance unset when this raises,
+            # so a later call can retry after the environment is fixed.
+            raise RuntimeError(
+                f"PaddleOCR을 불러오지 못했습니다 (OCR 사용 불가): {exc}"
+            ) from exc
 
         # Common OCR options: disable doc preprocessing and avoid extreme downscale defaults.
         common_kwargs = {
