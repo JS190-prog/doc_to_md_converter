@@ -85,10 +85,11 @@ class App(TkinterDnD.Tk):
         files = filedialog.askopenfilenames(
             title="Select Files",
             filetypes=[
-                ("All Supported", "*.docx *.doc *.hwp *.hwpx *.pdf *.xlsx *.xls"),
+                ("All Supported", "*.docx *.doc *.hwp *.hwpx *.pdf *.pptx *.xlsx *.xls"),
                 ("Word Files", "*.docx *.doc"),
                 ("Hangul Files", "*.hwp *.hwpx"),
                 ("PDF Files", "*.pdf"),
+                ("PowerPoint Files", "*.pptx"),
                 ("Excel Files", "*.xlsx *.xls"),
             ]
         )

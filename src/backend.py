@@ -7,6 +7,7 @@ from src.converters.hwpx_converter import convert_hwpx_to_md
 from src.converters.kordoc_converter import convert_with_kordoc
 from src.converters.markitdown_converter import convert_with_markitdown
 from src.converters.pdf_converter import convert_pdf_to_md
+from src.converters.pptx_converter import convert_pptx_to_md
 from src.converters.xls_converter import convert_xls_to_md
 from src.converters.xlsx_converter import convert_xlsx_to_md
 from src.utils.md_helpers import save_markdown
@@ -234,6 +235,9 @@ def process_file(file_path):
         
         elif file_ext == '.pdf':
             markdown_content = _convert_pdf_with_router(file_path)
+
+        elif file_ext == '.pptx':
+            markdown_content = convert_pptx_to_md(file_path, output_path)
 
         elif file_ext == '.xlsx':
             try:
