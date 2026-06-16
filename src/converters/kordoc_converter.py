@@ -14,6 +14,7 @@ import tempfile
 from urllib.parse import quote
 
 _kordoc_cmd = None
+_INSTALL_HINT = "npm install -g kordoc pdfjs-dist@5"
 
 
 def _find_kordoc():
@@ -31,10 +32,53 @@ def _find_kordoc():
             exe = candidate
     if exe is None:
         raise FileNotFoundError(
-            "kordoc CLI not found. Install with: npm install -g kordoc pdfjs-dist@5"
+            f"kordoc CLI not found. Install with: {_INSTALL_HINT}"
         )
     _kordoc_cmd = exe
     return exe
+
+
+def check_kordoc_dependency():
+    """Return a non-raising status dict for startup/diagnostic checks."""
+    status = {
+        "available": False,
+        "path": None,
+        "version": None,
+        "warning": None,
+        "install_hint": _INSTALL_HINT,
+    }
+
+    try:
+        exe = _find_kordoc()
+    except FileNotFoundError as exc:
+        status["warning"] = str(exc)
+        return status
+
+    status["available"] = True
+    status["path"] = exe
+
+    try:
+        result = subprocess.run(
+            [exe, "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+    except Exception as exc:
+        status["warning"] = f"kordoc found, but version check failed: {exc}"
+        return status
+
+    output = (result.stdout or result.stderr or "").strip()
+    if result.returncode == 0:
+        status["version"] = output.splitlines()[0] if output else "unknown"
+    else:
+        status["warning"] = (
+            f"kordoc found, but --version exited {result.returncode}: "
+            f"{output[:300]}"
+        )
+    return status
 
 
 def convert_with_kordoc(file_path):

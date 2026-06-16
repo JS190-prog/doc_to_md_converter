@@ -8,6 +8,7 @@ from tkinterdnd2 import DND_FILES, TkinterDnD
 import threading
 import os
 from src.backend import process_file
+from src.converters.kordoc_converter import check_kordoc_dependency
 
 class App(TkinterDnD.Tk):
     def __init__(self):
@@ -27,6 +28,7 @@ class App(TkinterDnD.Tk):
 
         # Layout
         self.create_widgets()
+        self.after(100, self.start_dependency_check)
 
     def create_widgets(self):
         # Header
@@ -120,6 +122,25 @@ class App(TkinterDnD.Tk):
     def log(self, message):
         self.log_list.insert(tk.END, message)
         self.log_list.see(tk.END)
+
+    def start_dependency_check(self):
+        threading.Thread(target=self.check_dependencies_thread, daemon=True).start()
+
+    def check_dependencies_thread(self):
+        status = check_kordoc_dependency()
+        self.after(0, self.show_kordoc_status, status)
+
+    def show_kordoc_status(self, status):
+        if status["available"]:
+            detail = status["version"] or os.path.basename(status["path"])
+            self.log(f"[CHECK] kordoc OK: {detail}")
+            if status["warning"]:
+                self.log(f"[WARN] {status['warning']}")
+            return
+
+        self.log(f"[WARN] {status['warning']}")
+        self.log(f"[HINT] Install optional kordoc CLI: {status['install_hint']}")
+        self.status_var.set("Ready - optional kordoc CLI not found")
 
     def start_conversion(self, files):
         self.status_var.set("Converting...")
