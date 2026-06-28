@@ -85,6 +85,21 @@ def _write_marker(runtime_models_root: Path) -> None:
     _marker_path(runtime_models_root).write_text(BUNDLE_VERSION, encoding="utf-8")
 
 
+def _model_kwargs_from(models_root: Path) -> Dict[str, str]:
+    """Return explicit PaddleOCR model kwargs if both models are valid under
+    ``models_root``; otherwise an empty dict."""
+    detection_model_dir = models_root / MODEL_NAMES["det"]
+    recognition_model_dir = models_root / MODEL_NAMES["rec"]
+    if not (_is_valid_model_dir(detection_model_dir) and _is_valid_model_dir(recognition_model_dir)):
+        return {}
+    return {
+        "text_detection_model_name": MODEL_NAMES["det"],
+        "text_detection_model_dir": str(detection_model_dir),
+        "text_recognition_model_name": MODEL_NAMES["rec"],
+        "text_recognition_model_dir": str(recognition_model_dir),
+    }
+
+
 def prepare_offline_ocr_assets() -> Dict[str, str]:
     """
     Copies bundled PaddleOCR models into a local writable directory on first run,
@@ -96,12 +111,22 @@ def prepare_offline_ocr_assets() -> Dict[str, str]:
     runtime_models_root = _runtime_models_root()
     model_names = list(MODEL_NAMES.values())
 
-    if not source_root.exists():
-        return {}
+    source_usable = source_root.exists() and all(
+        _is_valid_model_dir(source_root / name) for name in model_names
+    )
 
-    source_missing = [name for name in model_names if not _is_valid_model_dir(source_root / name)]
-    if source_missing:
-        print(f"[OCR] Bundled model files are missing: {', '.join(source_missing)}")
+    # When the bundled source is unavailable, reuse models that were already
+    # staged into the writable runtime dir on a previous run. Without this,
+    # a missing source bundle returns {} and forces PaddleOCR to resolve its
+    # models online — which hangs on offline / network-locked hosts even though
+    # valid models are already present on disk.
+    if not source_usable:
+        runtime_kwargs = _model_kwargs_from(runtime_models_root)
+        if runtime_kwargs:
+            return runtime_kwargs
+        if source_root.exists():
+            missing = [name for name in model_names if not _is_valid_model_dir(source_root / name)]
+            print(f"[OCR] Bundled model files are missing: {', '.join(missing)}")
         return {}
 
     refresh_needed = _needs_refresh(runtime_models_root)
@@ -114,14 +139,4 @@ def prepare_offline_ocr_assets() -> Dict[str, str]:
 
     _write_marker(runtime_models_root)
 
-    detection_model_dir = runtime_models_root / MODEL_NAMES["det"]
-    recognition_model_dir = runtime_models_root / MODEL_NAMES["rec"]
-    if not (_is_valid_model_dir(detection_model_dir) and _is_valid_model_dir(recognition_model_dir)):
-        return {}
-
-    return {
-        "text_detection_model_name": MODEL_NAMES["det"],
-        "text_detection_model_dir": str(detection_model_dir),
-        "text_recognition_model_name": MODEL_NAMES["rec"],
-        "text_recognition_model_dir": str(recognition_model_dir),
-    }
+    return _model_kwargs_from(runtime_models_root)
