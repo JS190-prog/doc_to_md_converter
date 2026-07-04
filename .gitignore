@@ -9,7 +9,20 @@ dist/
 
 # One-off / scratch files
 tmp/
+local_artifacts/
 *.log
+run_one_pdf_ocr.bat
+
+# Local secrets and machine-specific config
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.secret
+credentials/
+secrets/
 
 # Local agent state
 memory/
