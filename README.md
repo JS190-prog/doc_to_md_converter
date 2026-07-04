@@ -1,74 +1,73 @@
-# Doc to Markdown Converter
+# 문서 Markdown 변환기
 
-Windows-friendly document conversion utilities for producing Markdown from
-office documents, spreadsheets, presentations, HWP/HWPX files, and PDFs.
+Windows 환경에서 오피스 문서, 스프레드시트, 프레젠테이션, HWP/HWPX,
+PDF 파일을 Markdown으로 변환하는 도구 모음입니다.
 
-The project provides a small GUI entry point plus scriptable conversion
-commands. PDF conversion prefers existing text layers when available and falls
-back to OCR for scanned pages.
+간단한 GUI 실행 진입점과 스크립트에서 호출할 수 있는 CLI를 함께 제공합니다.
+PDF는 먼저 내장 텍스트 레이어를 사용하고, 스캔본처럼 텍스트가 없는 페이지는
+OCR로 처리합니다.
 
-## Supported Inputs
+## 지원 형식
 
-- Word: `.docx`, `.doc`
+- Word 문서: `.docx`, `.doc`
 - PowerPoint: `.pptx`
 - Excel: `.xlsx`, `.xls`
-- Korean word processor files: `.hwp`, `.hwpx`
-- PDF: digital text PDFs and scanned PDFs with OCR
+- 한글 문서: `.hwp`, `.hwpx`
+- PDF: 디지털 텍스트 PDF, OCR이 필요한 스캔 PDF
 
-## Quick Start
+## 빠른 시작
 
-Install Python dependencies:
+Python 의존성을 설치합니다.
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-Start the GUI:
+GUI를 실행합니다.
 
 ```powershell
 python -m src.main
 ```
 
-Or on Windows, double-click `run.bat`. If you need a specific Python
-interpreter, set `DOC_TO_MD_PYTHON` first:
+Windows에서는 `run.bat`를 더블 클릭해도 됩니다. 특정 Python 인터프리터를
+사용해야 한다면 먼저 `DOC_TO_MD_PYTHON` 환경변수를 지정하세요.
 
 ```powershell
 $env:DOC_TO_MD_PYTHON = "C:\Path\To\python.exe"
 .\run.bat
 ```
 
-## CLI Usage
+## CLI 사용법
 
-Convert one or more files from PowerShell:
+PowerShell에서 하나 이상의 파일을 변환할 수 있습니다.
 
 ```powershell
 python .\scripts\convert_to_md_cli.py --json .\sample\123.pdf
 ```
 
-The converter writes Markdown next to each input file using the
-`*_converted.md` suffix.
+변환 결과는 입력 파일 옆에 `*_converted.md` 이름으로 저장됩니다.
 
-For bridge integrations, use:
+브리지 연동에서는 다음 스크립트를 사용할 수 있습니다.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_doc_to_md_bridge.ps1 --json .\sample\123.pdf
 ```
 
-If you use a conda environment and need its DLL directories at runtime, either
-activate the environment first or set `DOC_TO_MD_CONDA_PREFIX`.
+conda 환경의 DLL 경로가 런타임에 필요하다면, 환경을 먼저 활성화하거나
+`DOC_TO_MD_CONDA_PREFIX`를 지정하세요.
 
-## OCR Notes
+## OCR 참고 사항
 
-PDF handling uses PyMuPDF for page inspection/rendering and PaddleOCR for
-image-based pages. Large scanned PDFs can take a while, especially on CPU-only
-systems.
+PDF 처리는 페이지 검사와 렌더링에 PyMuPDF를 사용하고, 이미지 기반 페이지는
+PaddleOCR로 인식합니다. 큰 스캔 PDF는 특히 CPU 환경에서 시간이 오래 걸릴 수
+있습니다.
 
-## Bundled Tooling
+## 포함된 도구
 
-The `tools/hwp2md.exe` binary is bundled as a fallback converter for HWP/HWPX
-documents. Its upstream license is included at `tools/LICENSE`.
+`tools/hwp2md.exe` 바이너리는 HWP/HWPX 변환용 fallback 도구로 포함되어
+있습니다. 해당 도구의 upstream 라이선스는 `tools/LICENSE`에 들어 있습니다.
 
-## License
+## 라이선스
 
-No repository-level license has been declared yet. Check third-party tool
-licenses before redistributing bundled binaries.
+이 저장소는 MIT 라이선스로 배포됩니다. 자세한 내용은 `LICENSE`를 확인하세요.
+포함된 third-party 도구는 각 도구의 라이선스를 함께 확인하세요.
