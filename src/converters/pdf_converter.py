@@ -32,9 +32,11 @@ def convert_pdf_to_md(file_path, dpi=300):
     mat = fitz.Matrix(dpi / 72, dpi / 72)
     for i, page in enumerate(doc):
         text = _extract_text_layer(page)
+        extraction_mode = "TEXT"
         if text is not None:
             print(f"  Text layer page {i + 1}/{total} (OCR skipped)")
         else:
+            extraction_mode = "OCR"
             print(f"  OCR processing page {i + 1}/{total}...")
             pix = page.get_pixmap(matrix=mat, alpha=False)
             # Wrap the raw pixel buffer directly (RGB) instead of round-tripping
@@ -47,7 +49,9 @@ def convert_pdf_to_md(file_path, dpi=300):
             text = get_ocr_text(img, paragraph=True)
 
         if text.strip():
-            pages_md.append(text.strip())
+            pages_md.append(
+                f"[PDF page {i + 1} {extraction_mode}]\n{text.strip()}"
+            )
 
     doc.close()
 

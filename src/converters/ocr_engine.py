@@ -2,22 +2,48 @@
 import os
 import numpy as np
 import re
+import sys
 import warnings
+from pathlib import Path
 
-# If torch is installed, it must be loaded BEFORE paddle: paddle bundles an
-# older libiomp5md.dll, and torch's shm.dll fails (WinError 127) when that
-# copy is already in the process. paddleocr imports torch indirectly via
-# paddlex -> modelscope, so preload it here while the process is still clean.
-try:
-    import torch  # noqa: F401
-except Exception:
-    pass
+
+# The CUDA wheels install their DLLs below site-packages/nvidia/*/bin, but
+# Windows does not add those directories to the DLL search path automatically.
+# Keep the handles alive for the whole process so Paddle can load cuBLAS/cuDNN.
+_NVIDIA_DLL_HANDLES = []
+if os.name == "nt":
+    nvidia_root = Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"
+    if nvidia_root.is_dir():
+        nvidia_bins = [path for path in nvidia_root.glob("*/bin") if path.is_dir()]
+        if nvidia_bins:
+            os.environ["PATH"] = os.pathsep.join(map(str, nvidia_bins)) + os.pathsep + os.environ.get("PATH", "")
+            for bin_dir in nvidia_bins:
+                try:
+                    _NVIDIA_DLL_HANDLES.append(os.add_dll_directory(str(bin_dir)))
+                except (AttributeError, FileNotFoundError, OSError):
+                    pass
+
+# PaddleX imports torch indirectly through ModelScope. On Windows, torch must
+# be loaded before paddle; otherwise paddle's bundled OpenMP DLL can be selected
+# first and torch/lib/shm.dll then fails with WinError 127. Keep preloading on by
+# default, while allowing an explicit opt-out for isolated Paddle-only runtimes.
+if os.getenv("DOC_TO_MD_PRELOAD_TORCH", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}:
+    try:
+        import torch  # noqa: F401
+    except Exception as exc:
+        warnings.warn(f"Torch preload failed before Paddle import: {exc}")
 
 import paddle
 import paddle.device
 from PIL import Image, ImageDraw
 from src.utils.offline_ocr_assets import prepare_offline_ocr_assets
 from src.utils.ocr_corrections import apply_ocr_corrections
+from src.utils.ocr_config import resolve_text_det_limit_side_len
 from src.utils.korean_spacing import fix_korean_spacing
 from src.utils.xy_cut import recursive_xy_cut
 
@@ -66,7 +92,7 @@ class OCREngine:
             "use_doc_orientation_classify": False,
             "use_doc_unwarping": False,
             "use_textline_orientation": False,
-            "text_det_limit_side_len": 960,
+            "text_det_limit_side_len": resolve_text_det_limit_side_len(),
             "text_det_limit_type": "max",
         }
         if offline_model_kwargs:
