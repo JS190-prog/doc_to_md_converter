@@ -35,6 +35,12 @@ def _default_profiles() -> Dict[str, List[Tuple[str, str]]]:
         ],
         "book": [
             (r"Consu-\s*mer", "Consumer"),
+            (r"\b(Gemini|Google|Vercel)\s+Al\b", r"\1 AI"),
+            (
+                r"\bAl(?=\s+(?:agent|Agent|Chatbot|chatbot|Gateway|SDK|Analysis|"
+                r"Portfolio|EMOTI|Databases|파트너|답변|기반|감정|에이전트))\b",
+                "AI",
+            ),
         ],
         "invoice": [
             (r"공급\s*가액", "공급가액"),

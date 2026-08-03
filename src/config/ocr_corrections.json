@@ -47,6 +47,16 @@
           "pattern": "Consu-\\s*mer",
           "replacement": "Consumer",
           "enabled": true
+        },
+        {
+          "pattern": "\\b(Gemini|Google|Vercel)\\s+Al\\b",
+          "replacement": "\\1 AI",
+          "enabled": true
+        },
+        {
+          "pattern": "\\bAl(?=\\s+(?:agent|Agent|Chatbot|chatbot|Gateway|SDK|Analysis|Portfolio|EMOTI|Databases|파트너|답변|기반|감정|에이전트))\\b",
+          "replacement": "AI",
+          "enabled": true
         }
       ]
     },
@@ -66,4 +76,3 @@
     }
   }
 }
-

@@ -47,8 +47,6 @@ from src.utils.ocr_config import resolve_text_det_limit_side_len
 from src.utils.korean_spacing import fix_korean_spacing
 from src.utils.xy_cut import recursive_xy_cut
 
-# Suppress warnings
-warnings.filterwarnings("ignore", category=UserWarning)
 import logging
 logging.getLogger("ppocr").setLevel(logging.ERROR)
 
