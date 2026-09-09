@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import sys
 from src.converters.docx_converter import convert_docx_to_md
@@ -114,6 +115,53 @@ def _is_usable_markdown(markdown_content, file_ext):
     return True
 
 
+_PDF_PAGE_MARKER_RE = re.compile(
+    r"^\s*\[PDF\s+page\s+(\d+)\b[^\]]*\]",
+    re.IGNORECASE | re.MULTILINE,
+)
+_PDF_MIN_PAGE_COVERAGE = 0.95
+
+
+def _pdf_page_coverage(markdown_content, file_path):
+    """Return a fail-closed page-preservation check for generated PDF Markdown.
+
+    Some PDF routers return a large, plausible-looking Markdown document while
+    silently omitting most pages.  The ingest pipeline requires page provenance,
+    so character count alone is not sufficient evidence of a successful PDF
+    conversion.
+    """
+    try:
+        import fitz
+
+        with fitz.open(file_path) as document:
+            expected = len(document)
+    except Exception as exc:
+        return {"status": "fail", "expected_pages": None, "observed_pages": 0, "ratio": 0.0, "error": str(exc)}
+
+    observed = {
+        int(match.group(1))
+        for match in _PDF_PAGE_MARKER_RE.finditer(markdown_content or "")
+    }
+    valid = {page for page in observed if 1 <= page <= expected}
+    ratio = len(valid) / expected if expected else 0.0
+    return {
+        "status": "pass" if expected and ratio >= _PDF_MIN_PAGE_COVERAGE else "fail",
+        "expected_pages": expected,
+        "observed_pages": len(valid),
+        "ratio": ratio,
+        "missing_pages": max(0, expected - len(valid)),
+    }
+
+
+def _usable_pdf_markdown(markdown_content, file_path):
+    if not _is_usable_markdown(markdown_content, ".pdf"):
+        return False, {"status": "fail", "reason": "low_quality_markdown"}
+    coverage = _pdf_page_coverage(markdown_content, file_path)
+    if coverage.get("status") != "pass":
+        return False, coverage
+    return True, coverage
+
+
 def _convert_docx_with_router(file_path):
     errors = []
 
@@ -181,28 +229,31 @@ def _convert_pdf_with_router(file_path):
     if digital_ratio >= 0.9:
         try:
             markdown = convert_with_kordoc(file_path)
-            if _is_usable_markdown(markdown, ".pdf"):
+            usable, coverage = _usable_pdf_markdown(markdown, file_path)
+            if usable:
                 print("[engine] pdf -> kordoc (digital)")
                 return markdown
-            errors.append("kordoc produced low-quality output")
+            errors.append(f"kordoc produced incomplete PDF coverage: {coverage}")
         except Exception as exc:
             errors.append(f"kordoc: {exc}")
 
     try:
         markdown = convert_pdf_to_md(file_path)
-        if _is_usable_markdown(markdown, ".pdf"):
+        usable, coverage = _usable_pdf_markdown(markdown, file_path)
+        if usable:
             print("[engine] pdf -> text-layer/ocr")
             return markdown
-        errors.append("ocr converter produced low-quality output")
+        errors.append(f"ocr converter produced incomplete PDF coverage: {coverage}")
     except Exception as exc:
         errors.append(f"ocr: {exc}")
 
     try:
         markdown = convert_with_markitdown(file_path)
-        if _is_usable_markdown(markdown, ".pdf"):
+        usable, coverage = _usable_pdf_markdown(markdown, file_path)
+        if usable:
             print("[engine] pdf -> markitdown fallback")
             return markdown
-        errors.append("markitdown produced low-quality output")
+        errors.append(f"markitdown produced incomplete PDF coverage: {coverage}")
     except Exception as exc:
         errors.append(f"markitdown: {exc}")
 
