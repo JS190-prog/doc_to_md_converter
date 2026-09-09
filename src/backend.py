@@ -116,10 +116,11 @@ def _is_usable_markdown(markdown_content, file_ext):
 
 
 _PDF_PAGE_MARKER_RE = re.compile(
-    r"^\s*\[PDF\s+page\s+(\d+)\b[^\]]*\]",
+    r"^[\s\ufeff]*\[PDF\s+page\s+(\d+)\b[^\]]*\]",
     re.IGNORECASE | re.MULTILINE,
 )
 _PDF_MIN_PAGE_COVERAGE = 0.95
+_PDF_SPARSE_COVER_MIN_CHARS = 10
 
 
 def _pdf_page_coverage(markdown_content, file_path):
@@ -154,11 +155,25 @@ def _pdf_page_coverage(markdown_content, file_path):
 
 
 def _usable_pdf_markdown(markdown_content, file_path):
-    if not _is_usable_markdown(markdown_content, ".pdf"):
-        return False, {"status": "fail", "reason": "low_quality_markdown"}
     coverage = _pdf_page_coverage(markdown_content, file_path)
     if coverage.get("status") != "pass":
         return False, coverage
+    if not _is_usable_markdown(markdown_content, ".pdf"):
+        matches = list(_PDF_PAGE_MARKER_RE.finditer(markdown_content or ""))
+        body = markdown_content[matches[0].end():] if len(matches) == 1 else ""
+        body_chars = len("".join(body.split()))
+        sparse_cover = (
+            coverage.get("expected_pages") == 1
+            and coverage.get("observed_pages") == 1
+            and body_chars >= _PDF_SPARSE_COVER_MIN_CHARS
+        )
+        if not sparse_cover:
+            return False, {"status": "fail", "reason": "low_quality_markdown", **coverage}
+        coverage = {
+            **coverage,
+            "sparse_cover_accepted": True,
+            "sparse_cover_body_chars": body_chars,
+        }
     return True, coverage
 
 

@@ -38,6 +38,30 @@ def test_pdf_page_coverage_rejects_plausible_partial_markdown(tmp_path: Path) ->
     assert result["missing_pages"] == 3
 
 
+def test_pdf_page_coverage_counts_bom_before_first_marker(tmp_path: Path) -> None:
+    source = tmp_path / "drawing.pdf"
+    _pdf_with_pages(source, 2)
+    markdown = "\ufeff[PDF page 1 TEXT]\nmeaningful drawing text\n[PDF page 2 TEXT]\nmeaningful drawing text"
+
+    result = backend._pdf_page_coverage(markdown, str(source))
+
+    assert result["status"] == "pass"
+    assert result["observed_pages"] == 2
+    assert result["missing_pages"] == 0
+
+
+def test_pdf_router_accepts_a_verified_single_page_sparse_cover(tmp_path: Path) -> None:
+    source = tmp_path / "cover.pdf"
+    _pdf_with_pages(source, 1)
+    markdown = "\ufeff[PDF page 1 OCR]\n코스콤 신사옥 소방 표지"
+
+    usable, coverage = backend._usable_pdf_markdown(markdown, str(source))
+
+    assert usable is True
+    assert coverage["sparse_cover_accepted"] is True
+    assert coverage["sparse_cover_body_chars"] >= 10
+
+
 def test_pdf_router_falls_back_when_kordoc_drops_pages(monkeypatch, tmp_path: Path) -> None:
     source = tmp_path / "drawing.pdf"
     _pdf_with_pages(source, 2)
