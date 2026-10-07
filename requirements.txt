@@ -1,22 +1,21 @@
+# Core document converters
 python-docx
 python-pptx
 olefile
 openpyxl
 xlrd
+defusedxml
 markitdown[pdf,docx]==0.1.5
-mammoth==1.12.0
-opendataloader-pdf
-# Active PDF path still uses the local OCR converter first.
-# MarkItDown is installed as a secondary engine for DOCX and PDF fallback.
-# OpenDataLoader PDF remains available for separate experiments.
+pymupdf
+
+# OCR
 # GPU: pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
 # CPU only: pip install paddlepaddle
 paddleocr
-
 Pillow
-tkinterdnd2
-pywin32
-requests
-
 # PaddleOCR 3.5.x pulls paddlex, which currently requires numpy<2.4.
 numpy>=2.0,<2.4
+
+# GUI / Windows Office automation (.doc via Word, .pptx slide rendering)
+tkinterdnd2
+pywin32; sys_platform == "win32"
