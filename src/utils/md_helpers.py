@@ -19,7 +19,15 @@ def md_italic(text):
 def md_image(alt_text, image_path):
     return f"![{alt_text}]({image_path})\n\n"
 
-def save_markdown(content, output_path):
-    """Saves content to a markdown file with UTF-8 encoding (with BOM for Windows)."""
-    with open(output_path, 'w', encoding='utf-8-sig') as f:
+def _bom_enabled():
+    return os.environ.get("DOC2MD_UTF8_BOM", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def save_markdown(content, output_path, bom=None):
+    """Save Markdown as UTF-8. A BOM (helps Windows Notepad) is written by
+    default; pass ``bom=False`` or set DOC2MD_UTF8_BOM=0 for BOM-less output
+    (better for RAG ingestion and strict Markdown tooling)."""
+    if bom is None:
+        bom = _bom_enabled()
+    with open(output_path, "w", encoding="utf-8-sig" if bom else "utf-8", newline="\n") as f:
         f.write(content)

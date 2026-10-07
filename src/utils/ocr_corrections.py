@@ -1,9 +1,11 @@
 import json
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+logger = logging.getLogger(__name__)
 
 _CORRECTIONS_CACHE: Dict[str, List[Tuple[str, str]]] | None = None
 _CORRECTIONS_MTIME: float | None = None
@@ -117,7 +119,7 @@ def _load_rules_from_file() -> Dict[str, List[Tuple[str, str]]]:
         raw = json.loads(path.read_text(encoding="utf-8"))
         return _build_profile_rules(raw)
     except Exception as e:
-        print(f"[OCR] Failed to load correction rules: {e}")
+        logger.warning("Failed to load OCR correction rules: %s", e)
         profiles = _default_profiles()
         profiles["__meta_default_profile__"] = [(_default_profile_name(), "")]
         return profiles

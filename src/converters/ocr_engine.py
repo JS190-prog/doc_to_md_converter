@@ -1,8 +1,11 @@
 
+import logging
 import os
-import numpy as np
 import re
+import threading
 import warnings
+
+import numpy as np
 
 # If torch is installed, it must be loaded BEFORE paddle: paddle bundles an
 # older libiomp5md.dll, and torch's shm.dll fails (WinError 127) when that
@@ -23,8 +26,8 @@ from src.utils.xy_cut import recursive_xy_cut
 
 # Suppress warnings
 warnings.filterwarnings("ignore", category=UserWarning)
-import logging
 logging.getLogger("ppocr").setLevel(logging.ERROR)
+logger = logging.getLogger(__name__)
 
 # Import PaddleOCR
 # PaddleOCR import moved to __init__
@@ -33,20 +36,29 @@ logging.getLogger("ppocr").setLevel(logging.ERROR)
 class OCREngine:
     _instance = None
     _reader = None
-    
+    _instance_lock = threading.Lock()
+
     @classmethod
     def get_instance(cls):
-        if cls._instance is None:
-            cls._instance = OCREngine()
-        return cls._instance
+        with cls._instance_lock:
+            if cls._instance is None:
+                cls._instance = OCREngine()
+            return cls._instance
 
     def __init__(self):
         if OCREngine._instance is not None:
-             raise Exception("This class is a singleton!")
+            raise RuntimeError("This class is a singleton!")
+        # PaddleOCR predictors are not thread-safe; serialize inference.
+        self._infer_lock = threading.Lock()
 
         self._correction_profile = os.getenv("OCR_CORRECTION_PROFILE", "").strip() or None
+        self._min_score = float(os.getenv("OCR_MIN_SCORE", "0.5"))
+        # Pages are rendered at 300dpi (A4 ~ 3508px tall) but detection is
+        # downscaled to this long-side limit; raise it (e.g. 1920) to trade
+        # speed for accuracy on small print.
+        det_limit = int(os.getenv("OCR_DET_LIMIT_SIDE_LEN", "960"))
 
-        print("Initializing PaddleOCR...")
+        logger.info("Initializing PaddleOCR...")
         offline_model_kwargs = prepare_offline_ocr_assets()
 
         try:
@@ -66,7 +78,7 @@ class OCREngine:
             "use_doc_orientation_classify": False,
             "use_doc_unwarping": False,
             "use_textline_orientation": False,
-            "text_det_limit_side_len": 960,
+            "text_det_limit_side_len": det_limit,
             "text_det_limit_type": "max",
         }
         if offline_model_kwargs:
@@ -83,7 +95,7 @@ class OCREngine:
         if gpu_ok:
             try:
                 gpu_name = paddle.device.cuda.get_device_name(0)
-                print(f"GPU detected: {gpu_name}")
+                logger.info("GPU detected: %s", gpu_name)
             except Exception:
                 pass
 
@@ -92,20 +104,20 @@ class OCREngine:
                 if self._smoke_test_reader(gpu_reader):
                     self._reader = gpu_reader
                     self._device_used = "gpu"
-                    print("PaddleOCR initialized on GPU.")
+                    logger.info("PaddleOCR initialized on GPU.")
                     return
-                print("GPU OCR smoke test failed (empty detection). Falling back to CPU.")
+                logger.warning("GPU OCR smoke test failed (empty detection). Falling back to CPU.")
             except Exception as e:
-                print(f"Failed to initialize PaddleOCR on GPU: {e}")
+                logger.warning("Failed to initialize PaddleOCR on GPU: %s", e)
         else:
             if paddle.is_compiled_with_cuda():
-                print("CUDA compiled but no GPU device found. Using CPU.")
+                logger.info("CUDA compiled but no GPU device found. Using CPU.")
             else:
-                print("PaddlePaddle CPU-only build detected. Using CPU.")
+                logger.info("PaddlePaddle CPU-only build detected. Using CPU.")
 
-        print("Initializing PaddleOCR on CPU (MKLDNN Disabled)...")
+        logger.info("Initializing PaddleOCR on CPU (MKLDNN Disabled)...")
         self._reader = PaddleOCR(device="cpu", enable_mkldnn=False, **common_kwargs)
-        print("PaddleOCR initialized on CPU.")
+        logger.info("PaddleOCR initialized on CPU.")
 
     def _smoke_test_reader(self, reader):
         """Quick runtime validation to avoid silent empty outputs on unstable backends."""
@@ -127,119 +139,89 @@ class OCREngine:
         except Exception:
             return False
 
+    @staticmethod
+    def _field(data, *names):
+        """Fetch the first available key/attribute from a PaddleX result."""
+        for name in names:
+            try:
+                if name in data:
+                    return data[name]
+            except TypeError:
+                pass
+            value = getattr(data, name, None)
+            if value is not None:
+                return value
+        return None
+
+    def _parse_result(self, result):
+        """Normalise PaddleOCR v3 (dict-like) and legacy (list) results into
+        ``[{"text": str, "box": polygon}]`` keeping only confident lines."""
+        if not result:
+            return []
+        ocr_data = result[0]
+
+        boxes = self._field(ocr_data, "dt_polys")
+        texts = self._field(ocr_data, "rec_texts", "rec_text")
+        if boxes is not None and texts is not None:
+            scores = self._field(ocr_data, "rec_scores", "rec_score")
+            if scores is None:
+                scores = [1.0] * len(texts)
+            parsed = []
+            for box, text, score in zip(boxes, texts, scores):
+                if isinstance(score, list):
+                    score = score[0] if score else 0.0
+                if float(score) >= self._min_score:
+                    parsed.append({"text": text, "box": box})
+            return parsed
+
+        # Legacy list-of-lines: [box, (text, score)]
+        if isinstance(ocr_data, list):
+            return [
+                {"text": line[1][0], "box": line[0]}
+                for line in ocr_data
+                if len(line) >= 2 and line[1]
+            ]
+        return []
+
     def extract_text(self, image, paragraph=False):
         """
         Extracts text from a PIL Image or numpy array.
-        Returns a single string of text.
+        Returns a single string ("" when the image genuinely has no text).
+
+        Raises RuntimeError when the engine is unusable or inference fails,
+        so callers can tell "blank page" apart from "OCR broke".
         """
+        if self._reader is None:
+            raise RuntimeError("OCR reader is not initialized")
+
+        # PaddleOCR expects a file path or numpy array.
+        if hasattr(image, "convert"):
+            image = image.convert("RGB")
+        if not isinstance(image, np.ndarray):
+            image = np.array(image)
+        # Ensure 3 channels (grayscale 2D arrays crash PaddleOCR normalization)
+        if image.ndim == 2:
+            image = np.stack((image,) * 3, axis=-1)
+
         try:
-            if self._reader is None:
-                return ""
+            with self._infer_lock:
+                # PaddleOCR v3+ recommends predict(); keep ocr() for compatibility.
+                if hasattr(self._reader, "predict"):
+                    result = self._reader.predict(image)
+                else:
+                    result = self._reader.ocr(image)
+            parsed_lines = self._parse_result(result)
+        except Exception as exc:
+            raise RuntimeError(f"PaddleOCR inference failed: {exc}") from exc
 
-            # PaddleOCR expects a file path or numpy array (BGR preferred by cv2, but RGB usually works too).
-            # If it's a PIL Image, ensure it's RGB.
-            if hasattr(image, 'convert'):
-                image = image.convert('RGB')
-            
-            if not isinstance(image, np.ndarray):
-                image = np.array(image)
-                
-            # Ensure 3 channels (PaddleOCR can fail on 2D grayscale arrays with "tuple index out of range" in normalization)
-            if image.ndim == 2:
-                # Convert Grayscale to BGR/RGB by stacking
-                image = np.stack((image,)*3, axis=-1)
-
-            # Run OCR
-            # PaddleOCR v3+ recommends predict(); keep ocr() fallback for compatibility.
-            if hasattr(self._reader, "predict"):
-                result = self._reader.predict(image)
-            else:
-                result = self._reader.ocr(image)
-            
-            # Helper to parse result
-            parsed_lines = []
-            
-            if result:
-                # Check for Paddlex/PaddleOCR v3 Object Structure
-                # It returns a list containing OCRResult objects
-                ocr_data = result[0]
-                
-                # Check if it behaves like a dict (Paddlex OCRResult)
-                # It might not support hasattr, so try dict access or conversion
-                try:
-                    # Try to access as dict first (Paddlex uses plural keys: rec_texts, rec_scores)
-                    if 'dt_polys' in ocr_data and ('rec_texts' in ocr_data or 'rec_text' in ocr_data):
-                        boxes = ocr_data['dt_polys']
-                        
-                        # Handle both plural (new) and singular (potential legacy/variant) keys
-                        texts = ocr_data['rec_texts'] if 'rec_texts' in ocr_data else ocr_data['rec_text']
-                        
-                        # Handle scores
-                        if 'rec_scores' in ocr_data:
-                            scores = ocr_data['rec_scores']
-                        elif 'rec_score' in ocr_data:
-                            scores = ocr_data['rec_score']
-                        else:
-                            scores = [1.0] * len(texts)
-                        
-                        for box, text, score in zip(boxes, texts, scores):
-                            # Ensure score is a float (sometimes it's a tensor or list)
-                            if isinstance(score, list):
-                                score = score[0] if score else 0.0
-                            if float(score) >= 0.5:
-                                parsed_lines.append({'text': text, 'box': box})
-                except Exception as e:
-                    # Fallback or ignore if not dict-like
-                    pass
-
-                # If parsed_lines is still empty, try attribute access (just in case)
-                if not parsed_lines and hasattr(ocr_data, 'dt_polys'):
-                    # Check for rec_texts attribute
-                    if hasattr(ocr_data, 'rec_texts'):
-                        texts = ocr_data.rec_texts
-                    elif hasattr(ocr_data, 'rec_text'):
-                        texts = ocr_data.rec_text
-                    else:
-                        texts = None
-                    
-                    if texts:
-                        boxes = ocr_data.dt_polys
-                        if hasattr(ocr_data, 'rec_scores'):
-                             scores = ocr_data.rec_scores
-                        elif hasattr(ocr_data, 'rec_score'):
-                             scores = ocr_data.rec_score
-                        else:
-                             scores = [1.0] * len(texts)
-                        
-                        for box, text, score in zip(boxes, texts, scores):
-                            if isinstance(score, list): score = score[0] if score else 0.0
-                            if float(score) >= 0.5:
-                                parsed_lines.append({'text': text, 'box': box})
-                            
-                # Case 2: Legacy List-of-Lists (Old PaddleOCR)
-                if not parsed_lines and isinstance(ocr_data, list):
-                    for line in ocr_data:
-                        # line structure: [box, (text, score)]
-                        if len(line) >= 2 and line[1]:
-                             text = line[1][0]
-                             box = line[0]
-                             parsed_lines.append({'text': text, 'box': box})
-            
-            if not parsed_lines:
-                return ""
-            
-            if paragraph:
-                return self._compose_paragraph_text(parsed_lines)
-            else:
-                ordered_lines = self._build_lines(parsed_lines)
-                joined = " ".join([line["text"] for line in ordered_lines if line["text"]])
-                return self._post_process_text(joined)
-                
-        except Exception as e:
-            print(f"PaddleOCR Error: {e}")
-            import traceback
-            traceback.print_exc()
+        if not parsed_lines:
             return ""
+
+        if paragraph:
+            return self._compose_paragraph_text(parsed_lines)
+        ordered_lines = self._build_lines(parsed_lines)
+        joined = " ".join(line["text"] for line in ordered_lines if line["text"])
+        return self._post_process_text(joined)
 
     def _box_metrics(self, box):
         xs = [p[0] for p in box]
@@ -400,10 +382,11 @@ class OCREngine:
         # Preserve paragraph breaks (double \n).
         text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
         # Remove unnecessary spaces before punctuation.
-        text = re.sub(r"\s+([,.;:!?])", r"\1", text)
-        # Remove spaces right after opening brackets and before closing brackets.
-        text = re.sub(r"([(\[{<])\s+", r"\1", text)
-        text = re.sub(r"\s+([)\]}>])", r"\1", text)
+        text = re.sub(r"[ \t]+([,.;:!?])", r"\1", text)
+        # Remove spaces right after opening brackets and before closing brackets
+        # (angle brackets are left alone: they are usually comparison operators).
+        text = re.sub(r"([(\[{])[ \t]+", r"\1", text)
+        text = re.sub(r"[ \t]+([)\]}])", r"\1", text)
         # Normalize tabs/newlines while preserving geometry-derived spacing.
         text = text.replace("\t", " ")
         text = re.sub(r"\n{3,}", "\n\n", text)

@@ -1,6 +1,13 @@
 import re
 import zipfile
-from xml.etree import ElementTree as ET
+
+try:
+    # Hardened parser: rejects entity-expansion ("billion laughs") payloads.
+    from defusedxml import ElementTree as ET
+except ImportError:  # pragma: no cover - defusedxml is a declared dependency
+    from xml.etree import ElementTree as ET
+
+MAX_SECTION_BYTES = 256 * 1024 * 1024
 
 
 class HWPXConversionError(Exception):
@@ -66,6 +73,8 @@ def convert_hwpx_to_md(file_path):
         section_paths.sort(key=_section_sort_key)
         pieces = []
         for path in section_paths:
+            if zf.getinfo(path).file_size > MAX_SECTION_BYTES:
+                raise HWPXConversionError(f"Section {path} exceeds the size limit")
             text = _extract_text_from_section_xml(zf.read(path))
             if text:
                 pieces.append(text)
