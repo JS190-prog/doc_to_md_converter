@@ -37,7 +37,7 @@ def create_test_docx():
     row2[0].text = '임꺽정'
     row2[1].text = '도적'
     
-    path = os.path.abspath("test_korean.docx")
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "fixtures", "test_korean.docx")
     doc.save(path)
     print(f"Created: {path}")
     return path

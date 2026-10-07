@@ -17,7 +17,7 @@ if str(REPO_ROOT) not in sys.path:
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
-from src.backend import process_file  # noqa: E402
+from src.backend import convert_file  # noqa: E402
 
 BatchStatus = Literal["queued", "running", "converted", "failed", "skipped"]
 
@@ -128,7 +128,8 @@ def convert_one_pdf(
             record.korean_chars = q["korean_chars"]
             record.quality_ok = q["quality_ok"]
             return record
-        success, message = process_file(str(staged))
+        outcome = convert_file(str(staged), output_path=str(generated_md))
+        success, message = outcome.success, outcome.message
         if not success:
             record.status = "failed"
             record.message = message

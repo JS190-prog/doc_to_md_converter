@@ -71,3 +71,21 @@ PaddleOCR로 인식합니다. 큰 스캔 PDF는 특히 CPU 환경에서 시간�
 
 이 저장소는 MIT 라이선스로 배포됩니다. 자세한 내용은 `LICENSE`를 확인하세요.
 포함된 third-party 도구는 각 도구의 라이선스를 함께 확인하세요.
+
+## 개발
+
+```bash
+python -m pip install -r requirements-dev.txt   # Windows 전용 패키지(pywin32)는 자동 제외
+python -m pytest -q
+```
+
+- 변환 결과는 `<원본이름>_converted.md`로 저장됩니다. 같은 폴더에 같은 이름의 다른 문서(예: `a.docx`와 `a.pdf`)가 있으면 `a_pdf_converted.md`처럼 확장자가 붙어 서로 덮어쓰지 않습니다.
+- `DOC2MD_UTF8_BOM=0` 이면 BOM 없는 UTF-8로 저장합니다(RAG/파서 연동 시 권장).
+- OCR 튜닝(환경 변수): `OCR_DET_LIMIT_SIDE_LEN`(기본 960, 작은 글씨는 1920 등으로 상향), `OCR_MIN_SCORE`(기본 0.5).
+- 로그는 `logging`으로 출력되며 GUI 로그 창에도 표시됩니다.
+
+## 번들 바이너리 (`tools/hwp2md.exe`)
+
+- 출처: https://github.com/roboco-io/hwp2md (MIT, `tools/LICENSE`)
+- SHA256: `6e552193ad0235a1cd4155a5f19ce18dbf78499a4be5fc5f58cfc3087cb14c6d`
+- 교체 시 위 해시와 출처 릴리스 태그를 함께 갱신하세요. 변환기는 kordoc → hwp2md → 내장 파서 순으로 시도하므로 hwp2md는 보조 수단입니다.

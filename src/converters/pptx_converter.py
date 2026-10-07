@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -8,6 +9,8 @@ from urllib.parse import quote
 
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -79,6 +82,11 @@ def convert_pptx_to_md(file_path: str, output_path: str | None = None) -> str:
         if notes:
             parts.extend(["### Speaker Notes", "", notes, ""])
 
+    try:
+        os.rmdir(paths.assets_dir)  # only succeeds when nothing was written
+    except OSError:
+        pass
+
     return "\n".join(parts).rstrip() + "\n"
 
 
@@ -127,7 +135,7 @@ def _try_export_slides_with_powerpoint(file_path: str, assets_dir: str, slide_co
             if os.path.isfile(image_path):
                 rendered[slide_index] = image_path
     except Exception as exc:
-        print(f"[pptx render fallback] {exc}")
+        logger.info("pptx slide render skipped (PowerPoint unavailable): %s", exc)
     finally:
         if presentation is not None:
             try:
@@ -162,15 +170,23 @@ def _extract_embedded_images(prs: Presentation, assets_dir: str) -> dict[int, li
                     f.write(image.blob)
                 image_paths.append(image_path)
             except Exception as exc:
-                print(f"[pptx image fallback] slide {slide_index}: {exc}")
+                logger.warning("pptx image extraction failed on slide %d: %s", slide_index, exc)
         if image_paths:
             extracted[slide_index] = image_paths
 
     return extracted
 
 
+def _reading_order(shapes):
+    """Top-to-bottom, left-to-right; shapes without geometry keep their order."""
+    return sorted(
+        shapes,
+        key=lambda sh: (getattr(sh, "top", None) or 0, getattr(sh, "left", None) or 0),
+    )
+
+
 def _iter_shapes(shapes) -> Iterable:
-    for shape in shapes:
+    for shape in _reading_order(shapes):
         yield shape
         if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
             yield from _iter_shapes(shape.shapes)
@@ -238,12 +254,15 @@ def _collect_tables(shapes) -> list[str]:
 
 
 def _extract_notes(slide) -> str:
-    notes_slide = getattr(slide, "notes_slide", None)
-    if notes_slide is None:
+    # has_notes_slide avoids python-pptx creating an empty notes slide.
+    if not getattr(slide, "has_notes_slide", False):
+        return ""
+    text_frame = slide.notes_slide.notes_text_frame
+    if text_frame is None:
         return ""
 
     paragraphs: list[str] = []
-    for shape in notes_slide.notes_text_frame.paragraphs:
+    for shape in text_frame.paragraphs:
         text = _clean_text(shape.text)
         if text:
             paragraphs.append(text)
@@ -256,8 +275,6 @@ def _asset_ref(paths: PptxAssetPaths, asset_path: str) -> str:
     except ValueError:
         rel = os.path.join(paths.assets_ref_dir, os.path.basename(asset_path))
     rel = rel.replace("\\", "/")
-    if rel.startswith(paths.assets_ref_dir):
-        return quote(rel, safe="/%._-")
     return quote(rel, safe="/%._-")
 
 

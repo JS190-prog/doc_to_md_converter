@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import sys
 from pathlib import Path
 from typing import Dict
+
+logger = logging.getLogger(__name__)
 
 APP_DIR_NAME = "doc_to_md_converter"
 BUNDLE_VERSION = "2026.02.12.1"
@@ -126,7 +129,7 @@ def prepare_offline_ocr_assets() -> Dict[str, str]:
             return runtime_kwargs
         if source_root.exists():
             missing = [name for name in model_names if not _is_valid_model_dir(source_root / name)]
-            print(f"[OCR] Bundled model files are missing: {', '.join(missing)}")
+            logger.warning("Bundled OCR model files are missing: %s", ", ".join(missing))
         return {}
 
     refresh_needed = _needs_refresh(runtime_models_root)

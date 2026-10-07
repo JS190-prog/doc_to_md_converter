@@ -7,11 +7,14 @@ Installed globally via: npm install -g kordoc pdfjs-dist@5
 (pdfjs-dist v6 is incompatible with kordoc 3.x — keep the v5 pin.)
 """
 
+import logging
 import os
 import shutil
 import subprocess
 import tempfile
 from urllib.parse import quote
+
+logger = logging.getLogger(__name__)
 
 _kordoc_cmd = None
 _INSTALL_HINT = "npm install -g kordoc pdfjs-dist@5"
@@ -81,8 +84,12 @@ def check_kordoc_dependency():
     return status
 
 
-def convert_with_kordoc(file_path):
+def convert_with_kordoc(file_path, asset_origin=None):
     """Convert a document to markdown via the kordoc CLI.
+
+    ``asset_origin`` is the path whose folder/stem should host extracted
+    images (defaults to ``file_path``); pass the user's original document
+    when ``file_path`` is a temporary intermediate.
 
     Returns the markdown string. Raises on CLI failure or empty output
     (e.g. scanned PDFs without a text layer) so router fallbacks engage.
@@ -107,7 +114,14 @@ def convert_with_kordoc(file_path):
         with open(out_path, encoding="utf-8") as f:
             md = f.read()
 
-        md = _preserve_extracted_assets(md, tmpdir, out_path, file_path)
+        try:
+            md = _preserve_extracted_assets(
+                md, tmpdir, out_path, asset_origin or file_path
+            )
+        except OSError as exc:
+            # Image export is best-effort; never lose the text because the
+            # source folder is read-only or the disk is full.
+            logger.warning("kordoc images could not be saved: %s", exc)
 
     if not md.strip():
         raise RuntimeError("kordoc produced empty output (image-based document?)")

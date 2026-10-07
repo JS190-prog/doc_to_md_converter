@@ -13,7 +13,8 @@ if str(REPO_ROOT) not in sys.path:
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
-from src.backend import process_file  # noqa: E402
+from src.backend import convert_file  # noqa: E402
+from src.utils.logging_setup import configure_logging  # noqa: E402
 
 
 def main() -> int:
@@ -27,6 +28,7 @@ def main() -> int:
         help="Emit machine-readable JSON results",
     )
     args = parser.parse_args()
+    configure_logging()
 
     results = []
     exit_code = 0
@@ -43,13 +45,15 @@ def main() -> int:
             exit_code = 1
             continue
 
-        success, message = process_file(str(input_path))
-        output_path = str(input_path.with_suffix("")) + "_converted.md"
+        outcome = convert_file(str(input_path))
+        success = outcome.success
         record = {
             "file": str(input_path),
             "success": bool(success),
-            "message": message,
-            "output_path": output_path if success else None,
+            "message": outcome.message,
+            "output_path": outcome.output_path,
+            "engine": outcome.engine,
+            "warnings": outcome.warnings,
         }
         results.append(record)
         if not success:

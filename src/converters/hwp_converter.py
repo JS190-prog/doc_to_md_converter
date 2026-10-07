@@ -7,6 +7,9 @@ class HWPConversionError(Exception):
     pass
 
 
+MAX_DECOMPRESSED_BYTES = 512 * 1024 * 1024
+
+
 def _is_hwp_compressed(ole):
     try:
         header = ole.openstream("FileHeader").read()
@@ -40,12 +43,50 @@ def _section_stream_names(ole):
 def _decompress_if_needed(data, compressed):
     if not compressed:
         return data
-    try:
-        # HWP uses raw DEFLATE for compressed record streams.
-        return zlib.decompress(data, -15)
-    except Exception:
-        # Fallback for files packaged with zlib wrapper.
-        return zlib.decompress(data)
+    # HWP uses raw DEFLATE for compressed record streams; fall back to the
+    # zlib-wrapped form. Output is capped to defuse decompression bombs.
+    last_exc = None
+    for wbits in (-15, zlib.MAX_WBITS):
+        try:
+            d = zlib.decompressobj(wbits)
+            out = d.decompress(data, MAX_DECOMPRESSED_BYTES + 1)
+            if len(out) > MAX_DECOMPRESSED_BYTES:
+                raise HWPConversionError("HWP section exceeds the size limit")
+            return out
+        except HWPConversionError:
+            raise
+        except Exception as exc:
+            last_exc = exc
+    raise HWPConversionError(f"Cannot decompress HWP section: {last_exc}")
+
+
+# WCHAR control codes (HWP 5.x spec): codes 0, 10, 13 and 24-31 are 1-WCHAR
+# "char" controls, while 1-9, 11-12 and 14-23 ("inline"/"extended": tables,
+# pictures, fields, tabs, ...) are followed by 7 more WCHARs of binary payload
+# that must be skipped rather than decoded as text.
+_PAYLOAD_CONTROLS = set(range(1, 10)) | {11, 12} | set(range(14, 24))
+_TAB = 9
+
+
+def _decode_para_text(payload):
+    out = []
+    i = 0
+    end = len(payload) - 1
+    while i < end:
+        code = payload[i] | (payload[i + 1] << 8)
+        if code in _PAYLOAD_CONTROLS:
+            if code == _TAB:
+                out.append(" ")
+            i += 16  # control WCHAR + 7 payload WCHARs
+            continue
+        if code in (10, 13):
+            out.append("\n")
+        elif code < 32:
+            pass
+        else:
+            out.append(payload[i : i + 2].decode("utf-16le", errors="ignore"))
+        i += 2
+    return "".join(out)
 
 
 def _extract_text_from_record_stream(data):
@@ -72,7 +113,7 @@ def _extract_text_from_record_stream(data):
 
         # 67: HWPTAG_PARA_TEXT
         if rec_type == 67 and payload:
-            out.append(payload.decode("utf-16le", errors="ignore"))
+            out.append(_decode_para_text(payload))
 
     text = "".join(out)
     text = text.replace("\r", "\n").replace("\x00", "")

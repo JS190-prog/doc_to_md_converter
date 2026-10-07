@@ -1,6 +1,12 @@
 import os
-# import docx  <-- Moved to lazy import in function
-from src.utils.md_helpers import md_header, md_bold, md_italic, clean_text
+import re
+
+from src.utils.md_helpers import md_header, md_bold, md_italic
+from src.utils.md_table import rows_to_markdown
+
+# "Heading 1", "heading1", Korean Word "제목 1", plus the document "Title".
+_HEADING_RE = re.compile(r"^(?:heading|제목)\s*(\d+)$")
+
 
 def get_font_name(run):
     """
@@ -10,7 +16,7 @@ def get_font_name(run):
     rPr = run._element.rPr
     if rPr is None:
         return None
-    
+
     # Check for eastAsia font (common for Korean like Malgun Gothic)
     if rPr.rFonts is not None:
         east_asia = rPr.rFonts.get(qn('w:eastAsia'))
@@ -21,111 +27,108 @@ def get_font_name(run):
             return ascii_font
     return None
 
+
+def _heading_level(style_name):
+    """Return the Markdown heading level for a Word style name, or None."""
+    name = (style_name or "").strip().lower()
+    if name in ("title", "제목"):
+        return 1
+    m = _HEADING_RE.match(name)
+    if m:
+        return max(1, min(6, int(m.group(1))))
+    return None
+
+
+def _is_list_paragraph(para, style_name):
+    if "list" in style_name or "목록" in style_name:
+        return True
+    pPr = para._element.pPr
+    return pPr is not None and pPr.numPr is not None
+
+
+def _runs_to_text(para):
+    parts = []
+    for run in para.runs:
+        content = run.text
+        if not content:
+            continue
+        # Wrapping whitespace-only runs in ** / * produces broken Markdown.
+        if content.strip():
+            lead = content[: len(content) - len(content.lstrip())]
+            trail = content[len(content.rstrip()):]
+            core = content.strip()
+            if run.bold:
+                core = md_bold(core)
+            if run.italic:
+                core = md_italic(core)
+            content = f"{lead}{core}{trail}"
+        parts.append(content)
+    return "".join(parts)
+
+
+def _paragraph_to_md(para):
+    style_name = para.style.name.lower() if para.style is not None else ""
+    para_text = _runs_to_text(para) or para.text
+    if not para_text.strip():
+        return ""
+
+    level = _heading_level(style_name)
+    if level is not None:
+        return md_header(para.text.strip(), level)
+    if _is_list_paragraph(para, style_name):
+        return f"- {para_text.strip()}\n"
+    return f"{para_text.strip()}\n\n"
+
+
+def _table_to_md(table):
+    """Render a table, de-duplicating merged cells.
+
+    python-docx returns the same cell object for every grid column a merged
+    cell spans (horizontally) and for every row it spans (vertically); emit
+    the text once and leave the covered positions empty.
+    """
+    rows = []
+    previous_tcs = []
+    for row in table.rows:
+        cells = []
+        tcs = []
+        for idx, cell in enumerate(row.cells):
+            tc = cell._tc
+            covered_h = bool(tcs) and tcs[-1] is tc
+            covered_v = idx < len(previous_tcs) and previous_tcs[idx] is tc
+            tcs.append(tc)
+            cells.append("" if covered_h or covered_v else cell.text.strip())
+        previous_tcs = tcs
+        rows.append(cells)
+    if not rows:
+        return ""
+    return rows_to_markdown(rows)
+
+
 def convert_docx_to_md(file_path):
     """
-    Converts a .docx file to Markdown.
+    Converts a .docx file to Markdown, keeping paragraphs and tables in
+    document order.
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
     import docx
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
     doc = docx.Document(file_path)
     md_lines = []
 
-    # Process Paragraphs
-    for para in doc.paragraphs:
-        style_name = para.style.name.lower()
-        text = ""
-        
-        # Heading processing
-        if 'heading' in style_name:
-            try:
-                level = int(style_name.replace('heading', '').strip())
-                text = md_header(para.text, level)
-            except ValueError:
-                text = para.text + "\n\n"
-        
-        # Normal text with Run processing (Bold/Italic/Font checks)
-        else:
-            para_text = ""
-            for run in para.runs:
-                content = run.text
-                if not content:
-                    continue
-                
-                # Font check (debug/logging logic could go here)
-                # font_name = get_font_name(run) # Used for debugging specific font handling if needed
-                
-                if run.bold:
-                    content = md_bold(content)
-                if run.italic:
-                    content = md_italic(content)
-                
-                para_text += content
-            
-            # List item detection
-            if 'list' in style_name:
-                text = f"- {para_text}\n"
-            else:
-                text = f"{para_text}\n\n"
-        
-        if text.strip():
-            md_lines.append(text)
-
-    # Process Tables
-    # Note: docx.Document.iter_inner_content() is ideal but complex to interleave perfectly.
-    # For simplicity in this v1, we append tables at the end or try to define position if possible.
-    # Standard python-docx doesn't easily give strict linear order of tables vs paragraphs without iter_inner_content 
-    # (which is available in newer versions or via XML parsing).
-    # We will use a simplified approach: Parse document body elements in order.
-    
-    md_lines = [] # Reset to do robust body iteration
-    
     for element in doc.element.body:
-        if element.tag.endswith('p'): # Paragraph
-            para = docx.text.paragraph.Paragraph(element, doc)
-            style_name = para.style.name.lower()
-            
-            # (Reuse logic from above)
-            para_text = ""
-            for run in para.runs:
-                content = run.text
-                if not content: continue
-                if run.bold: content = md_bold(content)
-                if run.italic: content = md_italic(content)
-                para_text += content
-            
-            final_text = ""
-            if 'heading' in style_name:
-                try:
-                    level = int(style_name.replace('heading', '').split()[0]) # strict parsing
-                    final_text = md_header(para_text, level)
-                except:
-                    final_text = f"{para_text}\n\n"
-            elif 'list' in style_name:
-                final_text = f"- {para_text}\n"
-            else:
-                final_text = f"{para_text}\n\n"
-            
-            if final_text.strip():
-                md_lines.append(final_text)
-                
-        elif element.tag.endswith('tbl'): # Table
-            table = docx.table.Table(element, doc)
-            # Convert table to MD
-            # 1. Header
-            rows = table.rows
-            if not rows: continue
-            
-            # Get first row as header (assumption)
-            headers = [cell.text.strip().replace('\n', ' ') for cell in rows[0].cells]
-            md_lines.append("| " + " | ".join(headers) + " |\n")
-            md_lines.append("| " + " | ".join(['---'] * len(headers)) + " |\n")
-            
-            # Data rows
-            for row in rows[1:]:
-                cells = [cell.text.strip().replace('\n', '<br>') for cell in row.cells]
-                md_lines.append("| " + " | ".join(cells) + " |\n")
-            md_lines.append("\n")
+        tag = element.tag.rsplit("}", 1)[-1]
+        if tag == "p":
+            text = _paragraph_to_md(Paragraph(element, doc))
+            if text:
+                md_lines.append(text)
+        elif tag == "tbl":
+            table_md = _table_to_md(Table(element, doc))
+            if table_md:
+                md_lines.append(table_md)
 
     return "".join(md_lines)

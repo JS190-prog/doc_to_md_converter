@@ -5,9 +5,12 @@ import platform
 platform.system = lambda: 'Windows'
 
 from tkinterdnd2 import DND_FILES, TkinterDnD
-import threading
+import logging
 import os
-from src.backend import process_file
+import queue
+import threading
+from src.backend import SUPPORTED_EXTENSIONS, convert_file
+from src.utils.logging_setup import CallbackHandler
 from src.converters.kordoc_converter import check_kordoc_dependency
 
 class App(TkinterDnD.Tk):
@@ -28,6 +31,18 @@ class App(TkinterDnD.Tk):
 
         # Layout
         self.create_widgets()
+
+        # Single worker + queue: OCR/Office automation are not re-entrant, so
+        # files dropped while a batch is running are queued, not run in parallel.
+        self._jobs = queue.Queue()
+        self._worker = None
+        self._worker_lock = threading.Lock()
+        self._stats = {"ok": 0, "failed": 0, "warned": 0}
+
+        # Show pipeline logs (engine choice, OCR progress) in the log pane.
+        self._log_handler = CallbackHandler(lambda m: self.after(0, self.log, m))
+        logging.getLogger("src").addHandler(self._log_handler)
+        logging.getLogger("src").setLevel(logging.INFO)
         self.after(100, self.start_dependency_check)
 
     def create_widgets(self):
@@ -142,25 +157,71 @@ class App(TkinterDnD.Tk):
         self.log(f"[HINT] Install optional kordoc CLI: {status['install_hint']}")
         self.status_var.set("Ready - optional kordoc CLI not found")
 
-    def start_conversion(self, files):
-        self.status_var.set("Converting...")
-        threading.Thread(target=self.process_files_thread, args=(files,), daemon=True).start()
+    def expand_inputs(self, paths):
+        """Expand dropped folders into the supported files they contain."""
+        files = []
+        for path in paths:
+            if os.path.isdir(path):
+                for root, _dirs, names in os.walk(path):
+                    for name in sorted(names):
+                        if os.path.splitext(name)[1].lower() in SUPPORTED_EXTENSIONS:
+                            files.append(os.path.join(root, name))
+            elif os.path.isfile(path):
+                files.append(path)
+        return files
 
-    def process_files_thread(self, files):
+    def start_conversion(self, paths):
+        files = self.expand_inputs(paths)
+        if not files:
+            self.log("[SKIP] No supported files found.")
+            return
+        for file in files:
+            self._jobs.put(file)
+        self.status_var.set(f"Converting... ({self._jobs.qsize()} queued)")
+        with self._worker_lock:
+            if self._worker is None or not self._worker.is_alive():
+                self._stats = {"ok": 0, "failed": 0, "warned": 0}
+                self._worker = threading.Thread(target=self.process_files_thread, daemon=True)
+                self._worker.start()
+
+    def process_files_thread(self):
         # Tkinter is not thread-safe: all widget access from this worker
         # thread must be marshalled to the main loop via self.after().
-        for file in files:
-            if not os.path.isfile(file):
-                continue
+        while True:
+            with self._worker_lock:
+                try:
+                    file = self._jobs.get_nowait()
+                except queue.Empty:
+                    # Decide "idle" under the lock so start_conversion cannot
+                    # enqueue a file between the check and thread exit.
+                    self._worker = None
+                    break
 
             self.after(0, self.log, f"Processing: {os.path.basename(file)}...")
-            success, msg = process_file(file)
-            status = "SUCCESS" if success else "FAILED"
-            self.after(0, self.log, f"[{status}] {msg}")
+            result = convert_file(file)
+            if result.success:
+                self._stats["ok"] += 1
+                if result.warnings:
+                    self._stats["warned"] += 1
+                tag = "SUCCESS" if not result.warnings else "WARNING"
+                engine = f" [{result.engine}]" if result.engine else ""
+                self.after(0, self.log, f"[{tag}]{engine} {result.message}")
+            else:
+                self._stats["failed"] += 1
+                self.after(0, self.log, f"[FAILED] {result.message}")
+
+        stats = dict(self._stats)
 
         def finish():
-            self.status_var.set("Finished.")
-            messagebox.showinfo("Done", "All files processed!")
+            summary = (
+                f"{stats['ok']} succeeded, {stats['failed']} failed"
+                + (f", {stats['warned']} with warnings" if stats["warned"] else "")
+            )
+            self.status_var.set(f"Finished: {summary}")
+            if stats["failed"] or stats["warned"]:
+                messagebox.showwarning("Done with problems", summary + "\nSee the log for details.")
+            else:
+                messagebox.showinfo("Done", summary)
         self.after(0, finish)
 
 if __name__ == "__main__":
