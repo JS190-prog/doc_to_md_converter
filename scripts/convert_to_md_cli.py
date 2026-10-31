@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+from contextlib import nullcontext, redirect_stdout
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +44,10 @@ def main() -> int:
             exit_code = 1
             continue
 
-        success, message = process_file(str(input_path))
+        # Conversion engines report progress on stdout. Keep --json stdout a
+        # single JSON document while retaining those diagnostics on stderr.
+        with redirect_stdout(sys.stderr) if args.json else nullcontext():
+            success, message = process_file(str(input_path))
         output_path = str(input_path.with_suffix("")) + "_converted.md"
         record = {
             "file": str(input_path),
